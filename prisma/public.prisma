@@ -1,0 +1,94 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["public"]
+}
+
+generator client {
+  provider        = "prisma-client-js"
+  output          = "../node_modules/@prisma/public-client"
+  previewFeatures = ["multiSchema"]
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  TRIAL
+  CANCELLED
+
+  @@schema("public")
+}
+
+enum PlanType {
+  TRIAL
+  BASIC
+  PROFESSIONAL
+  ENTERPRISE
+
+  @@schema("public")
+}
+
+model Tenant {
+  id           String       @id @default(uuid())
+  name         String
+  slug         String       @unique
+  status       TenantStatus @default(TRIAL)
+  schemaName   String       @unique
+  ownerName    String
+  ownerEmail   String
+  ownerPhone   String?
+  planId       String
+  logoUrl      String?
+  primaryColor String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  plan         Plan          @relation(fields: [planId], references: [id])
+  subscription Subscription?
+
+  @@schema("public")
+}
+
+model Plan {
+  id                String   @id @default(uuid())
+  name              String
+  type              PlanType @unique
+  price             Decimal  @db.Decimal(10, 2)
+  maxEstablishments Int      @default(1)
+  maxProfessionals  Int      @default(5)
+  maxAppointments   Int      @default(500)
+  features          Json
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  tenants Tenant[]
+
+  @@schema("public")
+}
+
+model Subscription {
+  id          String    @id @default(uuid())
+  tenantId    String    @unique
+  startDate   DateTime
+  endDate     DateTime?
+  trialEndsAt DateTime?
+  isActive    Boolean   @default(true)
+  stripeSubId String?   @unique
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@schema("public")
+}
+
+model SuperAdmin {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+
+  @@schema("public")
+}

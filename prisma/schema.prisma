@@ -1,0 +1,434 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  CLIENT
+  BARBER
+  OWNER
+  ADMIN
+}
+
+enum EstablishmentType {
+  BARBERSHOP
+  SALON
+  PETSHOP
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  PAID
+  NOSHOW
+}
+
+enum PaymentMethod {
+  CREDIT_CARD
+  DEBIT_CARD
+  PIX
+  CASH
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  REFUNDED
+  EXPIRED
+}
+
+enum PayoutStatus {
+  PENDING
+  IN_TRANSIT
+  PAID
+  FAILED
+  CANCELED
+}
+
+enum CancellationFeeType {
+  FIXED
+  PERCENTAGE
+}
+
+enum AppointmentActionType {
+  ACCEPTED
+  REJECTED
+}
+
+enum NotificationType {
+  APPOINTMENT_CREATED
+  APPOINTMENT_CONFIRMED
+  APPOINTMENT_CANCELLED
+  APPOINTMENT_RESCHEDULED
+}
+
+enum NotificationChannel {
+  WHATSAPP
+  IN_APP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  PERMANENTLY_FAILED
+  SKIPPED
+}
+
+model User {
+  id                 String   @id @default(uuid())
+  name               String
+  email              String   @unique
+  phone              String?
+  password           String
+  role               Role     @default(CLIENT)
+  mustChangePassword Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  ownedEstablishments Establishment[] @relation("EstablishmentOwner")
+  professionalProfile Professional?
+  appointments        Appointment[]   @relation("ClientAppointments")
+  reviews             Review[]        @relation("ClientReviews")
+  favorites           FavoriteEstablishment[] @relation("ClientFavorites")
+
+  notifications    Notification[]    @relation("UserNotifications")
+  notificationLogs NotificationLog[] @relation("UserNotificationLogs")
+}
+
+model Establishment {
+  id        String            @id @default(uuid())
+  name      String
+  address   String
+  type      EstablishmentType @default(BARBERSHOP)
+  ownerId   String
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  owner         User           @relation("EstablishmentOwner", fields: [ownerId], references: [id])
+  professionals Professional[]
+  services      Service[]
+  appointments  Appointment[]
+
+  operatingHours     EstablishmentSchedule[]
+  paymentMethods     EstablishmentPaymentMethod[]
+  cancellationPolicy CancellationPolicy?
+  reviews            Review[]
+  favorites          FavoriteEstablishment[]
+  employeeSchedules  EmployeeSchedule[]
+
+  stripeConnectedAccount StripeConnectedAccount?
+  payoutRecords          PayoutRecord[]
+
+  notifications  Notification[]  @relation("EstablishmentNotifications")
+  whatsappConfig WhatsAppConfig? @relation("EstablishmentWhatsApp")
+}
+
+model Professional {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  establishmentId String
+  bio             String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user          User                  @relation(fields: [userId], references: [id])
+  establishment Establishment         @relation(fields: [establishmentId], references: [id])
+  services      ProfessionalService[]
+  schedules     Schedule[]
+  appointments  Appointment[]
+  reviews       Review[]
+
+  employeeSchedules EmployeeSchedule[]
+  appointmentActions AppointmentActionLog[]
+}
+
+model Service {
+  id              String   @id @default(uuid())
+  name            String
+  description     String?
+  price           Decimal  @db.Decimal(10, 2)
+  durationMinutes Int
+  establishmentId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  establishment Establishment         @relation(fields: [establishmentId], references: [id])
+  professionals ProfessionalService[]
+  appointments  Appointment[]
+}
+
+model ProfessionalService {
+  professionalId String
+  serviceId      String
+
+  professional Professional @relation(fields: [professionalId], references: [id])
+  service      Service      @relation(fields: [serviceId], references: [id])
+
+  @@id([professionalId, serviceId])
+}
+
+model Schedule {
+  id             String   @id @default(uuid())
+  professionalId String
+  dayOfWeek      Int
+  startTime      String
+  endTime        String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  professional Professional @relation(fields: [professionalId], references: [id])
+}
+
+model Appointment {
+  id              String            @id @default(uuid())
+  clientId        String
+  professionalId  String
+  serviceId       String
+  establishmentId String
+  date            DateTime
+  status          AppointmentStatus @default(PENDING)
+  rescheduleCount Int               @default(0)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  client        User          @relation("ClientAppointments", fields: [clientId], references: [id])
+  professional  Professional  @relation(fields: [professionalId], references: [id])
+  service       Service       @relation(fields: [serviceId], references: [id])
+  establishment Establishment @relation(fields: [establishmentId], references: [id])
+  payment       Payment?
+  review        Review?
+  actionLog     AppointmentActionLog?
+
+  notifications    Notification[]    @relation("AppointmentNotifications")
+  notificationLogs NotificationLog[] @relation("AppointmentNotificationLogs")
+}
+
+model Payment {
+  id                    String        @id @default(uuid())
+  appointmentId         String        @unique
+  amount                Decimal       @db.Decimal(10, 2)
+  method                PaymentMethod
+  status                PaymentStatus @default(PENDING)
+  transactionId         String?
+  stripePaymentIntentId String?       @unique
+  stripeClientSecret    String?
+  platformFeeAmount     Decimal?      @db.Decimal(10, 2)
+  failureReason         String?
+  pixExpiresAt          DateTime?
+  paidAt                DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id])
+
+  @@index([stripePaymentIntentId])
+  @@map("payments")
+}
+
+model EstablishmentSchedule {
+  id              String   @id @default(uuid())
+  establishmentId String
+  dayOfWeek       Int
+  startTime       String
+  endTime         String
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id])
+
+  @@unique([establishmentId, dayOfWeek])
+}
+
+model EstablishmentPaymentMethod {
+  id              String        @id @default(uuid())
+  establishmentId String
+  paymentMethod   PaymentMethod
+  isEnabled       Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id])
+
+  @@unique([establishmentId, paymentMethod])
+}
+
+model CancellationPolicy {
+  id              String              @id @default(uuid())
+  establishmentId String              @unique
+  feeType         CancellationFeeType
+  feeValue        Decimal             @db.Decimal(10, 2)
+  minNoticeHours  Int                 @default(2)
+  isActive        Boolean             @default(true)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id])
+}
+
+model Review {
+  id              String   @id @default(uuid())
+  clientId        String
+  appointmentId   String   @unique
+  professionalId  String
+  establishmentId String
+  rating          Int
+  comment         String?  @db.VarChar(500)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  client        User          @relation("ClientReviews", fields: [clientId], references: [id])
+  appointment   Appointment   @relation(fields: [appointmentId], references: [id])
+  professional  Professional  @relation(fields: [professionalId], references: [id])
+  establishment Establishment @relation(fields: [establishmentId], references: [id])
+}
+
+model FavoriteEstablishment {
+  id              String   @id @default(uuid())
+  clientId        String
+  establishmentId String
+  createdAt       DateTime @default(now())
+
+  client        User          @relation("ClientFavorites", fields: [clientId], references: [id])
+  establishment Establishment @relation(fields: [establishmentId], references: [id])
+
+  @@unique([clientId, establishmentId])
+}
+
+model EmployeeSchedule {
+  id              String   @id @default(uuid())
+  professionalId  String
+  establishmentId String
+  dayOfWeek       Int
+  startTime       String
+  endTime         String
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  professional  Professional  @relation(fields: [professionalId], references: [id])
+  establishment Establishment @relation(fields: [establishmentId], references: [id])
+
+  @@unique([professionalId, dayOfWeek])
+}
+
+model AppointmentActionLog {
+  id              String               @id @default(uuid())
+  appointmentId   String               @unique
+  professionalId  String
+  action          AppointmentActionType
+  reason          String?              @db.VarChar(500)
+  createdAt       DateTime             @default(now())
+
+  appointment  Appointment  @relation(fields: [appointmentId], references: [id])
+  professional Professional @relation(fields: [professionalId], references: [id])
+}
+
+model StripeConnectedAccount {
+  id                 String   @id @default(uuid())
+  establishmentId    String   @unique
+  stripeAccountId    String   @unique
+  chargesEnabled     Boolean  @default(false)
+  payoutsEnabled     Boolean  @default(false)
+  onboardingComplete Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id])
+
+  @@map("stripe_connected_accounts")
+}
+
+model PayoutRecord {
+  id              String       @id @default(uuid())
+  establishmentId String
+  stripePayoutId  String       @unique
+  amount          Decimal      @db.Decimal(10, 2)
+  currency        String       @default("brl")
+  status          PayoutStatus @default(PENDING)
+  failureMessage  String?
+  periodStart     DateTime?
+  periodEnd       DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  establishment Establishment @relation(fields: [establishmentId], references: [id])
+
+  @@map("payout_records")
+}
+
+model Notification {
+  id              String           @id @default(uuid())
+  recipientId     String
+  appointmentId   String
+  establishmentId String
+  type            NotificationType
+  title           String
+  message         String
+  data            Json?
+  isRead          Boolean          @default(false)
+  readAt          DateTime?
+  createdAt       DateTime         @default(now())
+
+  recipient     User          @relation("UserNotifications", fields: [recipientId], references: [id], onDelete: Cascade)
+  appointment   Appointment   @relation("AppointmentNotifications", fields: [appointmentId], references: [id], onDelete: Cascade)
+  establishment Establishment @relation("EstablishmentNotifications", fields: [establishmentId], references: [id], onDelete: Cascade)
+
+  @@index([recipientId, isRead])
+  @@index([recipientId, createdAt])
+  @@index([establishmentId])
+  @@index([appointmentId])
+}
+
+model NotificationLog {
+  id                String              @id @default(uuid())
+  appointmentId     String
+  recipientId       String
+  recipientPhone    String?
+  channel           NotificationChannel
+  type              NotificationType
+  templateName      String?
+  templateParams    Json?
+  status            NotificationStatus  @default(PENDING)
+  whatsappMessageId String?
+  errorMessage      String?
+  retryCount        Int                 @default(0)
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  createdAt         DateTime            @default(now())
+
+  appointment Appointment @relation("AppointmentNotificationLogs", fields: [appointmentId], references: [id], onDelete: Cascade)
+  recipient   User        @relation("UserNotificationLogs", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([appointmentId])
+  @@index([recipientId])
+  @@index([status])
+  @@index([channel, status])
+}
+
+model WhatsAppConfig {
+  id                  String   @id @default(uuid())
+  establishmentId     String   @unique
+  isEnabled           Boolean  @default(false)
+  phoneNumberId       String
+  businessAccountId   String
+  accessToken         String
+  webhookVerifyToken  String
+  minRescheduleHours  Int      @default(2)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  establishment Establishment @relation("EstablishmentWhatsApp", fields: [establishmentId], references: [id], onDelete: Cascade)
+}
